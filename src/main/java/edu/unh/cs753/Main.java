@@ -53,7 +53,7 @@ public class Main {
             throw iob; 
         }
           
-        /*
+        //
         // run the indexing mechanism (only once per project run)
         System.out.print("\n\n\nCreating index... ");
         LuceneIndexer indexer = new LuceneIndexer(indexPath);
@@ -66,7 +66,7 @@ public class Main {
         long elapsedTime = System.currentTimeMillis() - startTime;
         System.out.println(Math.round(((float)elapsedTime / 1000)
                         * 100.0) / 100.0 + " seconds");
-        */
+        //
             
         runSpamQueries();
         
