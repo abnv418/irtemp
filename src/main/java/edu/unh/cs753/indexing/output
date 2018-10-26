@@ -1,0 +1,254 @@
+package edu.unh.cs753.indexing;
+
+import edu.unh.cs753.utils.SearchUtils;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.similarities.BasicStats;
+import org.apache.lucene.search.similarities.SimilarityBase;
+
+import java.io.IOException;
+
+import java.util.ArrayList;
+import edu.unh.cs.treccar_v2.Data;
+import java.io.PrintWriter;
+import java.math.BigDecimal;
+import java.io.File;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import edu.unh.cs753.utils.IndexUtils;
+import edu.unh.cs753.utils.QrelMap;
+
+import org.apache.lucene.search.MatchAllDocsQuery;
+
+
+public class LuceneSearcher {
+    
+    public final IndexSearcher searcher;
+    private String methodName;
+
+    /** 
+     * Construct a Lucene Searcher.
+     * @param indexLoc: the path containing the index.
+    */
+    public LuceneSearcher(String indexLoc) {
+        searcher = SearchUtils.createIndexSearcher(indexLoc);
+        methodName = "default";
+
+    }
+
+    /**
+     * Function: query
+     * Desc: Queries Lucene paragraph corpus using a standard similarity function.
+     *       Note that this uses the StandardAnalyzer.
+     * @param queryString: The query string that will be turned into a boolean query.
+     * @param nResults: How many search results should be returned
+     * @return TopDocs (ranked results matching query)
+     */
+    public TopDocs query(String queryString, Integer nResults) {
+        Query q = SearchUtils.createStandardBooleanQuery(queryString, "text");
+        try {
+            return searcher.search(q, nResults);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+
+    /**
+     * Function: custom
+     * Desc: A custom scoring function which is the sum of hits within a document.
+     */
+    public void custom() throws IOException {
+        methodName = "custom";
+        SimilarityBase mysimilarity= new SimilarityBase() {
+            @Override
+            protected float score(BasicStats basicStats, float v, float v1) {
+                float sum1 = 0.0f;
+                sum1 += v;
+                return sum1;
+            }
+
+            @Override
+            public String toString() {
+                return null;
+            }
+        };
+        searcher.setSimilarity(mysimilarity);
+    }
+    
+    
+    public ArrayList<String> getQueries(String pageFilePath) {
+        ArrayList<String> ret = new ArrayList<String>();
+        for (Data.Page p : SearchUtils.createPageIterator(pageFilePath)) {
+            String keywordQuery = p.getPageName();
+            ret.add(keywordQuery);
+        }
+        return ret;
+    }
+    
+    
+    public void findRPrec(String paraFilePath, String pageFilePath, 
+                String qrelFilePath, double trecEvalResult) throws IOException {
+        
+        QrelMap qMap = new QrelMap(qrelFilePath);
+        double total = 0;
+        final int nQueries = getQueries(pageFilePath).size();
+        for (Data.Page p : SearchUtils.createPageIterator(pageFilePath)) {
+            String queryId = p.getPageId();
+            String keywordQuery = p.getPageName();
+            double nQrelRelevantDocs = qMap.numRel(queryId);
+            int hits = 0;
+            int cnt = 0;
+            TopDocs topDocs = query(keywordQuery, (int)nQrelRelevantDocs);
+            for (ScoreDoc sd : topDocs.scoreDocs) { 
+                Document doc = searcher.doc(sd.doc);
+                String paraId = doc.get("id");
+                if(qMap.isRel(queryId, paraId)) 
+                    hits++;
+                if(cnt++ == nQrelRelevantDocs) 
+                    break;
+            }
+            total += (double)hits / cnt;
+        }
+        // display the result (average among all the queries)
+        double result = (double) total/nQueries;
+        System.out.println("\tRPrec: " + result + ": " + methodName);
+        // display the trec_eval difference
+        displayTrecComparison(trecEvalResult, result, "Rprec");
+    }
+    
+    
+    public void findMean(String paraFilePath, String pageFilePath,
+     String qrelFilePath, double trecEvalResult) throws IOException {
+
+        QrelMap qMap = new QrelMap(qrelFilePath);
+        double total = 0;
+        final int nQueries = getQueries(pageFilePath).size();
+        for (Data.Page p : SearchUtils.createPageIterator(pageFilePath)) {
+            String queryId = p.getPageId();
+            String keywordQuery = p.getPageName();
+            double nQrelRelevantDocs = qMap.numRel(queryId);
+            double curDocTotal = 0;
+            long nRelevant = 0;
+            int cnt = 0;
+            TopDocs topDocs = query(keywordQuery, (int)nQrelRelevantDocs);
+            for (ScoreDoc sd : topDocs.scoreDocs) { 
+                Document doc = searcher.doc(sd.doc);
+                String paraId = doc.get("id");
+                if(qMap.isRel(queryId, paraId)) {
+                    nRelevant++;
+                    curDocTotal += (double)nRelevant / (cnt+1);
+                }
+                cnt++;
+            }
+            if(nQrelRelevantDocs > 0) 
+                total += (1/nQrelRelevantDocs) * curDocTotal;
+        }
+        // display the result (average among all the queries)
+        double result = (double)total / nQueries;
+        System.out.println("\tMap: " + result + ": " + methodName);
+        // display the trec_eval difference
+        displayTrecComparison(trecEvalResult, result, "Map");
+    }
+    
+    
+    public void findNdcg20(String paraFilePath, String pageFilePath, String qrelFilePath, double trecEvalResult) throws IOException {
+        QrelMap qMap = new QrelMap(qrelFilePath);
+        double total = 0;
+        int cnt = 0; 
+        final int nQueries = getQueries(pageFilePath).size();
+        for (Data.Page p : SearchUtils.createPageIterator(pageFilePath)) {
+            String queryId = p.getPageId();
+            String keywordQuery = p.getPageName();
+            double nQrelRelevantDocs = qMap.numRel(queryId);
+            double cutoffAt20Total = 0;
+            double iDCG = 0;
+            int i = 0;
+            TopDocs topDocs = query(keywordQuery, (int)nQrelRelevantDocs);
+            int nRelevant = topDocs.scoreDocs.length;
+            for (ScoreDoc sd : topDocs.scoreDocs) { 
+                if(i == 20) 
+                    cutoffAt20Total = iDCG;
+                Document doc = searcher.doc(sd.doc);
+                String paraId = doc.get("id");
+                if(qMap.isRel(queryId, paraId)) {
+                    double log2iPlus1 = Math.log(i+2) / Math.log(2);
+                    iDCG += sd.score / log2iPlus1; 
+                }
+                i++;
+            }
+            int cutoffCnt = Math.min(20, nRelevant);
+            if(cutoffCnt > 0 && iDCG > 0) {
+                double dcg = (double)cutoffAt20Total / cutoffCnt;
+                iDCG /= nRelevant;
+                total += dcg/iDCG;
+            }
+        }
+        // display the result (average among all the queries)
+        double result = (double)total / nQueries;
+        System.out.println("\tNcdg@20: " + result + ": " + methodName);
+        // display the trec_eval difference
+        displayTrecComparison(trecEvalResult, result, "Ncdg@20");
+    }
+    
+    
+    private void displayTrecComparison(double trecEvalResult, double result, String which) {
+        double dif;
+        if(result < trecEvalResult) {
+            dif = trecEvalResult - result;
+            System.out.println("\t\tNOTE: " + which + 
+            " result scored lower than trec_eval result by: " + dif);
+        } 
+        else if(result > trecEvalResult) {
+            dif = result - trecEvalResult;
+            System.out.println("\t\tNOTE: " + which + 
+            " result scored higher than trec_eval result by: " + dif);
+        } 
+        else {
+            System.out.println("\t\tNOTE: " + which + 
+            " result equalled trec_eval result");
+        }
+    }
+    
+    
+    /**
+     * Function: makeRunFile
+     * Desc: Retrieve page name queries and create the run files.
+     * @param cborLoc: The path where the page cbor file exists.
+     */
+    public void makeRunFile(String cborLoc) throws IOException {
+        final int topN = 100; // get the top 100 results
+        String outFileName = "run_files/" + methodName + "-runfile.txt";
+        PrintWriter writer = new PrintWriter(outFileName, "UTF-8");
+        // iterate through each page
+        for (Data.Page p : SearchUtils.createPageIterator(cborLoc)) {
+            String queryId = p.getPageId();
+            String keywordQuery = p.getPageName();
+            
+            TopDocs topDocs = query(keywordQuery, topN);
+            int rank = topDocs.scoreDocs.length;
+            // iterate through n (<= 100) top docs and output to run file  
+            for (ScoreDoc sd : topDocs.scoreDocs) { 
+                Document doc = searcher.doc(sd.doc);
+                String paraId = doc.get("id");
+                String score = Float.toString(sd.score);
+                String out = queryId + " Q0 " + paraId + " " + rank--
+                             + " " + score + " group2-" + methodName;		 
+                writer.println(out);
+            }
+        }
+        writer.close();
+    }
+    
+    
+       
+}
