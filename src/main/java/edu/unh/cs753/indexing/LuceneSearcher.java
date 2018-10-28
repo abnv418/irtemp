@@ -65,6 +65,7 @@ public class LuceneSearcher {
     private final static int WIDTH = 1000, HEIGHT = 750;
     
     private static HashMap<String, Boolean> groundTruthMap = new HashMap<String, Boolean>();
+    private static HashMap<String,Boolean>partial=new HashMap<String, Boolean>();
     //private int nSpamDocs = 0;
     
 	/** 
@@ -77,9 +78,13 @@ public class LuceneSearcher {
         searcher.setSimilarity(new BM25Similarity());
         
         groundTruthMap = new HashMap<String, Boolean>();
+
+        partial=new HashMap<String,Boolean>();
         
         fillGroundTruthMap();
-        
+        partial();
+
+
     }
     
     // use the ground truth file (file named index) to populate a hashmap containing
@@ -106,8 +111,33 @@ public class LuceneSearcher {
             }
         } 
     }
-    
-    
+
+    private void partial() throws IOException {
+
+        // for now using "partial"
+        String truthFileLoc = "/Users/abnv/Desktop/trec07p/partial/index";
+        String line1;
+        BufferedReader br = new BufferedReader(new FileReader(truthFileLoc));
+
+        while ((line1 = br.readLine()) != null) {
+            Scanner Scan = new Scanner(line1);
+            boolean isSpampar = true;
+            while(Scan.hasNext()) {
+                String token = Scan.next();
+                if(token.equals("ham"))
+                    isSpampar = false;
+                else if(!token.equals("spam")) {
+                    int index = token.lastIndexOf('/');
+                    String docID = token.substring(index + 1, token.length());
+                    partial.put(docID,isSpampar);
+                }
+            }
+        }
+    }
+
+
+
+
     private int N() {
         return groundTruthMap.size();
     }
